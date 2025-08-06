@@ -981,6 +981,12 @@ function setupTLEUI() {
     }
     const loadBtn=document.getElementById('load-tle-btn');
     const catalogBtn=document.getElementById('load-catalog-btn');
+    if(catalogBtn){ catalogBtn.addEventListener('click', ()=>{
+        fetch('fullcatalog.txt')
+            .then(resp=>resp.text())
+            .then(txt=>loadTLEText(txt))
+            .catch(err=>{ alert('Failed to load catalog'); console.error(err); });
+    }); }
     if(loadBtn){ loadBtn.addEventListener('click', ()=>{
         const txt=document.getElementById('tle-text').value; loadTLEText(txt);
     }); }
