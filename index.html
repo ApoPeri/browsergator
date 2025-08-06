@@ -114,6 +114,7 @@
              <label>Or paste TLE data</label>
              <textarea id="tle-text" placeholder="Paste TLE data here..."></textarea>
              <button id="load-tle-btn">Load TLEs</button>
+             <button id="load-catalog-btn">Add 08/24/25 Catalog</button>
          </div>
      </div>
     <!-- Constellations Section moved from right-panel -->
@@ -979,6 +980,7 @@ function setupTLEUI() {
         });
     }
     const loadBtn=document.getElementById('load-tle-btn');
+    const catalogBtn=document.getElementById('load-catalog-btn');
     if(loadBtn){ loadBtn.addEventListener('click', ()=>{
         const txt=document.getElementById('tle-text').value; loadTLEText(txt);
     }); }
@@ -1410,7 +1412,7 @@ window.zoomToSatellite = function(obj){
         targetPos = obj.position.clone();
     } else if(obj && obj.lat !== undefined && obj.lon !== undefined){ // Case 3: ground-station {lat,lon}
         const phi = (90 - obj.lat) * Math.PI/180;
-        const theta = (obj.lon + 180) * Math.PI/180;
+        const theta = obj.lon * Math.PI/180;
         const r = atmosphere.innerRadius + 0.005;
         targetPos = new THREE.Vector3(
             r * Math.sin(phi)*Math.cos(theta),
