@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Real-Time Earth Atmosphere Shader</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: black; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #info {
+            left: 310px; /* leave space for left-panel */
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        #controls {
+            right: 310px; /* leave space for right-panel */
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        button {
+            margin: 2px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        /* ---- Added UI Panel Styles ---- */
+        .ui-panel {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            color: #fff;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+            font-size: 12px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+        #left-panel { top: 10px; left: 10px; width: 280px; }
+        #right-panel { top: 10px; right: 10px; width: 280px; }
+        #time-display { bottom: 10px; left: 50%; transform: translateX(-50%); padding: 8px 16px; }
+        .section { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; margin-top: 12px; }
+        .section:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+        .section h4 { margin: 0 0 12px 0; color: #4ade80; font-size: 13px; font-weight: 600; }
+        .control-row { display: flex; gap: 8px; }
+        .control-row input { flex: 1; }
+        textarea { height: 80px; resize: vertical; font-family: monospace; }
+        button { background: rgba(74, 222, 128, 0.2); border: 1px solid #4ade80; color: #4ade80; }
+        .item-list { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+        .color-swatch { display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:middle; }
+        .const-item { display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.05);padding:4px 6px;border-radius:4px;font-size:11px;margin:2px 0; cursor:pointer; }
+        .const-item.selected{background:rgba(99,102,241,0.35);} 
+/* ---- Modal Styles ---- */
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;justify-content:center;align-items:center;z-index:200;}
+.modal-content{background:#111;padding:20px;border:1px solid #4ade80;border-radius:8px;min-width:320px;color:#fff;max-height:90vh;overflow-y:auto;font-size:12px;}
+.modal-content input,.modal-content select{width:100%;margin-bottom:8px;background:#222;color:#eee;border:1px solid #555;border-radius:4px;}
+.modal-content button{margin-top:4px;background:rgba(74,222,128,0.2);border:1px solid #4ade80;color:#4ade80;width:100%;}
+</style>
+    <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.157.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+     <!-- Additional modules for TLE parsing -->
+     <script type="module" src="./physics.js"></script>
+     <script type="module" src="./tle-parser.js"></script>
+     <script type="module" src="./satellite-tree.js"></script>
+ <style>
+    /* satellite context menu */
+    .context-menu{position:absolute;display:none;z-index:1000;background:rgba(30,30,30,0.95);color:#ddd;border:1px solid #555;border-radius:4px;font-size:12px;min-width:160px;backdrop-filter:blur(4px);} 
+    .context-menu .menu-item{padding:6px 8px;cursor:pointer;white-space:nowrap;} 
+    .context-menu .menu-item:hover{background:#444;} 
+</style>
+</head>
+<body>
+<div id="info">
+    <div>Current UTC Time: <span id="utc-time"></span></div>
+    <!-- <div>Sun Position: <span id="sun-pos"></span></div>
+    <div>Earth Rotation: <span id="earth-rot"></span></div> -->
+    <div id="disclaimer" style="margin-top:4px;font-size:11px;color:#ffcccc;max-width:400px;">
+        <em>Disclaimer: This visualization is provided for educational purposes only. No accuracy guarantees are made and the creators accept no liability for decisions or actions taken based on the displayed information.</em>
+    </div>
+ </div>
+ 
+ <!-- Added advanced UI panels -->
+ <div id="time-display" class="ui-panel" style="display:none;">
+     <span id="time-text">Loading...</span>
+ </div>
+ 
+ <div id="left-panel" class="ui-panel">
+     <div class="section">
+         <h4>Satellite Data</h4>
+         <div class="control-group">
+             <label>Upload TLE File</label>
+             <input type="file" id="tle-file" accept=".txt,.tle" />
+         </div>
+         <div class="control-group">
+             <label>Or paste TLE data</label>
+             <textarea id="tle-text" placeholder="Paste TLE data here..."></textarea>
+             <button id="load-tle-btn">Load TLEs</button>
+         </div>
+     </div>
+    <!-- Constellations Section moved from right-panel -->
+   <div class="section">
+       <h4>Constellations</h4>
+       <div class="control-group">
+           <label>Name</label>
+           <input type="text" id="const-name" placeholder="My Constellation" />
+       </div>
+       <div class="control-group">
+           <label>Colour</label>
+           <input type="color" id="const-color" value="#4ade80" />
+       </div>
+       <button id="create-const-btn">Create</button>
+       <div id="const-list" class="item-list"></div>
+       <h5 style="margin-top:10px;color:#ddd;">Hierarchy</h5>
+       <div class="control-group" style="margin-top:4px;">
+           <input type="text" id="sat-filter" placeholder="filter satellites..." style="width:140px;font-size:11px;" />
+           <div style="margin-top:4px;display:flex;gap:4px;">
+               <button id="bulk-add-btn" style="flex:1;font-size:11px;">Add Filtered</button>
+               <button id="bulk-rem-btn" style="flex:1;font-size:11px;">Remove</button>
+           </div>
+       </div>
+       <div id="sat-tree" class="item-list"></div>
+   </div>
+
+ </div>
+
+ <div id="right-panel" class="ui-panel">
+     <div class="section">
+         <h4>Add Custom Satellite</h4>
+         <div class="control-group" style="margin-top:8px;">
+            <label>Upload CSV (Kepler elements)</label>
+            <input type="file" id="kep-csv-file" accept=".csv" />
+        </div>
+         <div class="control-group">
+             <label>Name</label>
+             <input type="text" id="sat-name" placeholder="Custom Satellite" />
+         </div>
+         <div class="control-group">
+             <label>Semi-major Axis (km) / Eccentricity</label>
+             <div class="control-row">
+                 <input type="number" id="sat-a" placeholder="7000" step="0.1" value="7000" />
+                 <input type="number" id="sat-e" placeholder="0.001" step="0.0001" min="0" max="0.9999" value="0.001" />
+             </div>
+         </div>
+         <div class="control-group">
+             <label>Inclination (°) / RAAN (°)</label>
+             <div class="control-row">
+                 <input type="number" id="sat-i" placeholder="45" step="0.1" value="45" />
+                 <input type="number" id="sat-raan" placeholder="0" step="0.1" value="0" />
+             </div>
+         </div>
+         <div class="control-group">
+             <label>Arg. of Perigee (°) / Mean Anomaly (°)</label>
+             <div class="control-row">
+                 <input type="number" id="sat-argp" placeholder="0" step="0.1" value="0" />
+                 <input type="number" id="sat-ma" placeholder="0" step="0.1" value="0" />
+             </div>
+         </div>
+         <button id="add-satellite-btn">Add Satellite</button>
+     </div>
+     
+     <!-- Ground Station Section -->
+     <div class="section">
+         <h4>Add Ground Station</h4>
+         <div class="control-group">
+             <label>Name</label>
+             <input type="text" id="gs-name" placeholder="Ground Station" />
+         </div>
+         <div class="control-group">
+             <label>Latitude (°) / Longitude (°)</label>
+             <div class="control-row">
+                 <input type="number" id="gs-lat" placeholder="0" step="0.1" value="0" min="-90" max="90" />
+                 <input type="number" id="gs-lon" placeholder="0" step="0.1" value="0" min="-180" max="180" />
+             </div>
+         </div>
+         <button id="add-gs-btn">Add Ground Station</button>
+     </div>
+     <!-- Constellations Section -->
+     <div class="section" style="display:none;">
+         <h4>Constellations</h4>
+         <div class="control-group">
+             <label>Name</label>
+             <input type="text" id="const-name" placeholder="My Constellation" />
+         </div>
+         <div class="control-group">
+             <label>Colour</label>
+             <input type="color" id="const-color" value="#4ade80" />
+         </div>
+         <button id="create-const-btn">Create</button>
+         <div id="const-list" class="item-list"></div>
+         <h5 style="margin-top:10px;color:#ddd;">Hierarchy</h5>
+         <div class="control-group" style="margin-top:4px;">
+             <input type="text" id="sat-filter" placeholder="filter satellites..." style="width:140px;font-size:11px;" />
+             <div style="margin-top:4px;display:flex;gap:4px;">
+                 <button id="bulk-add-btn" style="flex:1;font-size:11px;">Add Filtered</button>
+                 <button id="bulk-rem-btn" style="flex:1;font-size:11px;">Remove</button>
+             </div>
+         </div>
+         <div id="sat-tree" class="item-list"></div>
+     </div>
+ </div>
+<div id="controls">
+    <button id="time-toggle-button" onclick="toggleRealTime()">Toggle Manual Time</button>
+    <button onclick="resetView()">Reset View</button>
+    <div class="control-row">
+        <label>Time Speed:</label>
+        <input type="range" id="timeSpeed" min="0.1" max="1000" value="1" step="0.1" onchange="updateTimeSpeed()">
+        <span class="value-display" id="speedValue">1.0x</span>
+    </div>
+    <div class="control-row">
+        <label>Cone FOV:</label>
+        <input type="range" id="coneFov" min="0" max="120" value="10" step="1" onchange="updateConeFov()">
+        <span class="value-display" id="fovValue">10°</span>
+    </div>
+    <div class="control-row">
+        <label>Sensor Range (km):</label>
+        <input type="range" id="coneRange" min="50" max="43000" value="500" step="10" onchange="updateConeRange()">
+        <span class="value-display" id="rangeValue">500 km</span>
+    </div>
+    <button onclick="toggleCones()">Toggle Sensor Cones</button>
+    <button onclick="toggleSatellites()">Toggle Satellites</button>
+    <button onclick="showAnalysisModal()">Analysis</button>
+</div>
+
+<!-- Analysis Modal -->
+<div id="analysis-modal" class="modal" style="display:none;">
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Run Analysis</h3>
+    <label>Type:</label>
+    <select id="analysis-type">
+      <option value="visibility">Visibility</option>
+    </select>
+
+    <label>Start UTC:</label>
+    <input type="datetime-local" id="analysis-start">
+    <label>End UTC:</label>
+    <input type="datetime-local" id="analysis-end">
+
+    <label>Hosts (sensors):</label>
+    <select id="analysis-hosts" multiple size="6"></select>
+    <label>Targets:</label>
+    <select id="analysis-targets" multiple size="6"></select>
+
+    <button onclick="runAnalysis()">Run</button>
+    <button onclick="closeAnalysisModal()">Close</button>
+    <div id="analysis-plot" style="width:100%;height:320px;"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TLEParser } from './tle-parser.js';
+import { constellations, addConstellation, assignSatellite, unassignSatellite, updateConstellationColor } from './constellations.js';
+import { initTree } from './satellite-tree.js';
+
+let renderer, scene, camera, controls, earth, sunVector;
+let clock; // To manage frame time deltas
+
+// Time management variables
+let realTimeMode = true;
+let timeSpeed = 1;
+let simulatedTime = 0; // The master time for the simulation in milliseconds
+
+// Satellite & Ground systems
+let satellites = [];
+let satelliteMeshes = [];
+let groundStations = [];
+let groundStationMeshes = [];
+let groundStationDebugLines = [];
+window.groundStations = groundStations; // expose for tree
+const raycaster = new THREE.Raycaster();
+const mouseNDC = new THREE.Vector2();
+let sensorCones = [];
+let satelliteCount = 12;
+let showCones = true;
+let showSatellites = true;
+let coneFov = 45; // degrees
+let coneRangeKm = 1000; // kilometres
+
+// ---- Analysis Modal Logic ----
+window.showAnalysisModal = function(){
+    const modal=document.getElementById('analysis-modal');
+    populateAnalysisLists();
+    // default start/end times: now and +1hr
+    const now=new Date();
+    const end=new Date(now.getTime()+3600*1000);
+    document.getElementById('analysis-start').value=now.toISOString().slice(0,16);
+    document.getElementById('analysis-end').value=end.toISOString().slice(0,16);
+    modal.style.display='flex';
+};
+window.closeAnalysisModal = function(){ document.getElementById('analysis-modal').style.display='none'; };
+function populateAnalysisLists(){
+    const hostsSel=document.getElementById('analysis-hosts');
+    const targetsSel=document.getElementById('analysis-targets');
+    hostsSel.innerHTML=''; targetsSel.innerHTML='';
+    // hosts: satellites with sensors (everyone for now) + ground stations
+    satellites.forEach((s,i)=>{
+        const opt=document.createElement('option');opt.value=i;opt.text=s.name;hostsSel.appendChild(opt);
+    });
+    groundStations.forEach((gs,i)=>{
+        const opt=document.createElement('option');opt.value='g'+i;opt.text=gs.name||('GS '+i);hostsSel.appendChild(opt);
+    });
+    // targets: satellites + ground stations
+    satellites.forEach((s,i)=>{
+        const opt=document.createElement('option');opt.value=i;opt.text=s.name;targetsSel.appendChild(opt);
+    });
+    groundStations.forEach((gs,i)=>{
+        const opt=document.createElement('option');opt.value='g'+i;opt.text=gs.name||('GS '+i);targetsSel.appendChild(opt);
+    });
+}
+window.runAnalysis = function(){
+    const type=document.getElementById('analysis-type').value;
+    if(type!=='visibility'){ alert('Only visibility supported for now'); return; }
+    const start=new Date(document.getElementById('analysis-start').value);
+    const end=new Date(document.getElementById('analysis-end').value);
+    const hostIndices=Array.from(document.getElementById('analysis-hosts').selectedOptions).map(o=>o.value);
+    const targetIndices=Array.from(document.getElementById('analysis-targets').selectedOptions).map(o=>o.value);
+    if(hostIndices.length===0||targetIndices.length===0){alert('Select at least one host and target');return;}
+
+    console.log('Running visibility analysis', {start,end,hostIndices,targetIndices});
+    // basic visibility calc, time step 60s
+    const step=60; // seconds
+    const results={};
+    for(let t=start.getTime(); t<=end.getTime(); t+=step*1000){
+        const simSec=(t - start.getTime())/1000 + simulatedTime; // reuse propagator time offset
+        const propagated = OrbitPropagator.propagateAll(satellites, simSec);
+        hostIndices.forEach(h=>{
+            const hObj= h.startsWith('g') ? groundStations[parseInt(h.slice(1))] : propagated[parseInt(h)];
+            targetIndices.forEach(trg=>{
+                const tObj= trg.startsWith('g') ? groundStations[parseInt(trg.slice(1))] : propagated[parseInt(trg)];
+                if(!hObj||!tObj) return;
+                const vis = checkVisibility(toVec(hObj), toVec(tObj));
+                if(vis){
+                    const hostName = hObj.name || (h.startsWith('g') ? (hObj.code || 'GroundStation') : 'Sat');
+                    const targetName = tObj.name || (trg.startsWith('g') ? (tObj.code || 'GroundStation') : 'Sat');
+                    const key = hostName + ' → ' + targetName;
+                    if(!results[key]) results[key]=[];
+                    results[key].push(t);
+                }
+            });
+        });
+    }
+    console.log('Visibility results',results);
+    drawVisibilityTimeline(results, start, end, hostIndices, targetIndices);
+};
+function drawVisibilityTimeline(results,start,end,hosts,targets){
+    const plotDiv=document.getElementById('analysis-plot');
+    if(!plotDiv) return;
+    const traces=[];
+    const yLabels=[];
+    let row=0;
+    for(const key in results){
+        const times=results[key].sort((a,b)=>a-b);
+        let segStart=times[0];
+        for(let i=1;i<=times.length;i++){
+            if(i===times.length || times[i]-times[i-1]>60000){
+                const segEnd=times[i-1]+60000;
+                traces.push({
+                    x:[new Date(segStart), new Date(segEnd)],
+                    y:[row,row],
+                    mode:'lines',
+                    line:{width:10,color:'#4ade80'},
+                    showlegend:false,
+                    hovertemplate:`${key}<br>%{x|%H:%M:%S}`
+                });
+                segStart=times[i];
+            }
+        }
+        yLabels.push(key);
+        row++;
+    }
+    const layout={
+        title:'Visibility Timeline',
+        height:Math.max(300, row*30+100),
+        xaxis:{type:'date', title:'Time (UTC)'},
+        yaxis:{tickvals:[...Array(row).keys()], ticktext:yLabels, title:'Host→Target', autorange:'reversed'},
+        margin:{l:120,r:20,t:40,b:40},
+        plot_bgcolor:'#111',paper_bgcolor:'#111',font:{color:'#fff'}
+    };
+    Plotly.newPlot(plotDiv,traces,layout,{displayModeBar:false});
+}
+
+function toVec(obj){
+    if(obj instanceof THREE.Vector3) return obj;
+    if(obj.position && obj.position instanceof THREE.Vector3) return obj.position;
+    if(obj.lat!==undefined && obj.lon!==undefined){
+        const phi=(90-obj.lat)*Math.PI/180;
+        const theta=(obj.lon+180)*Math.PI/180;
+        const r=atmosphere.innerRadius+0.005;
+        return new THREE.Vector3(
+            r*Math.sin(phi)*Math.cos(theta),
+            r*Math.cos(phi),
+            r*Math.sin(phi)*Math.sin(theta)
+        );
+    }
+    return null;
+}
+
+function checkVisibility(posA,posB){
+    // simple line-of-sight: must not intersect Earth; dot product with radial >0 for both
+    const EARTHR=1; // scene units
+    const vec= new THREE.Vector3().subVectors(posB,posA);
+    const mid= posA.clone().addScaledVector(vec,0.5);
+    return mid.length() > EARTHR; // crude: midpoint above surface
+}
+
+// ---- Atmosphere Settings ----
+const EARTHRADIUS = 1.0;
+const atmosphere = {
+    Kr: 0.0025,
+    Km: 0.0010,
+    ESun: 20.0,
+    g: -0.950,
+    innerRadius: EARTHRADIUS,
+    outerRadius: 1.025 * EARTHRADIUS,
+    wavelength: [0.650, 0.570, 0.475],
+    scaleDepth: 0.25,
+    mieScaleDepth: 0.1
+};
+
+const AtmUniforms = {
+    v3LightPosition: { value: new THREE.Vector3(1, 0, 0).normalize() },
+    cPs: { value: new THREE.Vector3(1, 0, 0) },
+    v3InvWavelength: { value: new THREE.Vector3(
+        1 / Math.pow(atmosphere.wavelength[0], 4),
+        1 / Math.pow(atmosphere.wavelength[1], 4),
+        1 / Math.pow(atmosphere.wavelength[2], 4)
+    ) },
+    fCameraHeight: { value: 0 },
+    fCameraHeight2: { value: 0 },
+    fInnerRadius: { value: atmosphere.innerRadius },
+    fInnerRadius2: { value: atmosphere.innerRadius * atmosphere.innerRadius },
+    fOuterRadius: { value: atmosphere.outerRadius },
+    fOuterRadius2: { value: atmosphere.outerRadius * atmosphere.outerRadius },
+    fKrESun: { value: atmosphere.Kr * atmosphere.ESun },
+    fKmESun: { value: atmosphere.Km * atmosphere.ESun },
+    fKr4PI: { value: atmosphere.Kr * 4.0 * Math.PI },
+    fKm4PI: { value: atmosphere.Km * 4.0 * Math.PI },
+    fScale: { value: 1 / (atmosphere.outerRadius - atmosphere.innerRadius) },
+    fScaleDepth: { value: atmosphere.scaleDepth },
+    fScaleOverScaleDepth: { value: 1 / (atmosphere.outerRadius - atmosphere.innerRadius) / atmosphere.scaleDepth },
+    g: { value: atmosphere.g },
+    g2: { value: atmosphere.g * atmosphere.g },
+    nSamples: { value: 3 },
+    fSamples: { value: 3.0 },
+    tDisplacement: { value: null },
+    tSkyboxDiffuse: { value: null },
+    fNightScale: { value: 1 },
+    tDiffuse: { value: null },
+    tDiffuseNight: { value: null }
+};
+
+// ---- Shaders ----
+const vertexSky = `
+uniform vec3 v3LightPosition;
+uniform vec3 v3InvWavelength;
+uniform vec3 cPs;
+uniform float fCameraHeight;
+uniform float fCameraHeight2;
+uniform float fOuterRadius;
+uniform float fOuterRadius2;
+uniform float fInnerRadius;
+uniform float fInnerRadius2;
+uniform float fKrESun;
+uniform float fKmESun;
+uniform float fKr4PI;
+uniform float fKm4PI;
+uniform float fScale;
+uniform float fScaleDepth;
+uniform float fScaleOverScaleDepth;
+
+const int nSamples = 3;
+const float fSamples = 3.0;
+
+varying vec3 v3Direction;
+varying vec3 c0;
+varying vec3 c1;
+
+float scale(float fCos)
+{
+	float x = 1.0 - fCos;
+	return fScaleDepth * exp(-0.00287 + x*(0.459 + x*(3.83 + x*(-6.80 + x*5.25))));
+}
+
+void main(void)
+{
+	float fCameraHeight = length(cPs);
+	float fCameraHeight2 = fCameraHeight * fCameraHeight;
+	
+	vec3 v3Ray = position - cPs;
+	float fFar = length(v3Ray);
+	v3Ray /= fFar;
+
+	float B = 2.0 * dot(cPs, v3Ray);
+	float C = fCameraHeight2 - fOuterRadius2;
+	float fDet = max(0.0, B*B - 4.0*C);
+	float fNear = 0.5 * (-B - sqrt(fDet));
+
+	vec3 v3Start = cPs + v3Ray * fNear;
+	fFar -= fNear;
+
+	float fStartAngle = dot(v3Ray, v3Start) / fOuterRadius;
+	float fStartDepth = exp(-1.0 / fScaleDepth);
+	float fStartOffset = fStartDepth * scale(fStartAngle);
+
+	float fSampleLength = fFar / fSamples;
+	float fScaledLength = fSampleLength * fScale;
+	vec3 v3SampleRay = v3Ray * fSampleLength;
+	vec3 v3SamplePoint = v3Start + v3SampleRay * 0.5;
+
+	vec3 v3FrontColor = vec3(0.0, 0.0, 0.0);
+	for(int i = 0; i < nSamples; i++)
+	{
+		float fHeight = length(v3SamplePoint);
+		float fDepth = exp(fScaleOverScaleDepth * (fInnerRadius - fHeight));
+		float fLightAngle = dot(v3LightPosition, v3SamplePoint) / fHeight;
+		float fCameraAngle = dot(v3Ray, v3SamplePoint) / fHeight;
+		float fScatter = (fStartOffset + fDepth * (scale(fLightAngle) - scale(fCameraAngle)));
+		vec3 v3Attenuate = exp(-fScatter * (v3InvWavelength * fKr4PI + fKm4PI));
+		v3FrontColor += v3Attenuate * (fDepth * fScaledLength);
+		v3SamplePoint += v3SampleRay;
+	}
+
+	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+
+	c0 = v3FrontColor * (v3InvWavelength * fKrESun);
+	c1 = v3FrontColor * fKmESun;
+	v3Direction = cPs - position;
+}`;
+const fragmentSky = `
+uniform vec3 v3LightPos;
+uniform float g;
+uniform float g2;
+
+varying vec3 v3Direction;
+varying vec3 c0;
+varying vec3 c1;
+
+float getMiePhase(float fCos, float fCos2, float g, float g2)
+{
+	return 1.5 * ((1.0 - g2) / (2.0 + g2)) * (1.0 + fCos2) / pow(1.0 + g2 - 2.0 * g * fCos, 1.5);
+}
+
+float getRayleighPhase(float fCos2)
+{
+	return 0.75 + 0.75 * fCos2;
+}
+
+void main (void)
+{
+	float fCos = dot(v3LightPos, v3Direction) / length(v3Direction);
+	float fCos2 = fCos * fCos;
+
+	vec3 color = getRayleighPhase(fCos2) * c0 + getMiePhase(fCos, fCos2, g, g2) * c1;
+
+	gl_FragColor = vec4(color, 1.0);
+	gl_FragColor.a = gl_FragColor.b;
+}`;
+const vertexGround = `
+uniform vec3 v3LightPosition;
+uniform vec3 cPs;
+uniform vec3 v3InvWavelength;
+uniform float fCameraHeight;
+uniform float fCameraHeight2;
+uniform float fOuterRadius;
+uniform float fOuterRadius2;
+uniform float fInnerRadius;
+uniform float fInnerRadius2;
+uniform float fKrESun;
+uniform float fKmESun;
+uniform float fKr4PI;
+uniform float fKm4PI;
+uniform float fScale;
+uniform float fScaleDepth;
+uniform float fScaleOverScaleDepth;
+uniform sampler2D tDiffuse;
+
+varying vec3 v3Direction;
+varying vec3 c0;
+varying vec3 c1;
+varying vec3 vNormal;
+varying vec2 vUv;
+
+const int nSamples = 3;
+const float fSamples = 3.0;
+
+float scale(float fCos)
+{
+	float x = 1.0 - fCos;
+	return fScaleDepth * exp(-0.00287 + x*(0.459 + x*(3.83 + x*(-6.80 + x*5.25))));
+}
+
+void main(void)
+{
+	float fCameraHeight = length(cPs);
+	float fCameraHeight2 = fCameraHeight*fCameraHeight;
+	
+	vec3 v3Ray = position - cPs;
+	float fFar = length(v3Ray);
+	v3Ray /= fFar;
+
+	float B = 2.0 * dot(cPs, v3Ray);
+	float C = fCameraHeight2 - fOuterRadius2;
+	float fDet = max(0.0, B*B - 4.0 * C);
+	float fNear = 0.5 * (-B - sqrt(fDet));
+
+	vec3 v3Start = cPs + v3Ray * fNear;
+	fFar -= fNear;
+
+	float fDepth = exp((fInnerRadius - fOuterRadius) / fScaleDepth);
+	float fCameraAngle = dot(-v3Ray, position) / length(position);
+	float fLightAngle = dot(v3LightPosition, position) / length(position);
+	float fCameraScale = scale(fCameraAngle);
+	float fLightScale = scale(fLightAngle);
+	float fCameraOffset = fDepth*fCameraScale;
+	float fTemp = (fLightScale + fCameraScale);
+
+	float fSampleLength = fFar / fSamples;
+	float fScaledLength = fSampleLength * fScale;
+	vec3 v3SampleRay = v3Ray * fSampleLength;
+	vec3 v3SamplePoint = v3Start + v3SampleRay * 0.5;
+
+	vec3 v3FrontColor = vec3(0.0, 0.0, 0.0);
+	vec3 v3Attenuate;
+
+	for(int i = 0; i < nSamples; i++)
+	{
+		float fHeight = length(v3SamplePoint);
+		float fDepth = exp(fScaleOverScaleDepth * (fInnerRadius - fHeight));
+		float fScatter = fDepth*fTemp - fCameraOffset;
+		v3Attenuate = exp(-fScatter * (v3InvWavelength * fKr4PI + fKm4PI));
+		v3FrontColor += v3Attenuate * (fDepth * fScaledLength);
+		v3SamplePoint += v3SampleRay;
+	}
+
+	c0 = v3Attenuate;
+	c1 = v3FrontColor * (v3InvWavelength * fKrESun + fKmESun);
+	vUv = uv;
+	vNormal = normal;
+
+	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+const fragmentGround = `
+uniform float fNightScale;
+uniform vec3 v3LightPosition;
+uniform sampler2D tDiffuse;
+uniform sampler2D tDiffuseNight;
+
+varying vec3 c0;
+varying vec3 c1;
+varying vec3 vNormal;
+varying vec2 vUv;
+
+void main (void)
+{
+	vec3 diffuseTex = texture2D(tDiffuse, vUv).xyz;
+	vec3 diffuseNightTex = texture2D(tDiffuseNight, vUv).xyz;
+
+	vec3 day = 0.75 * diffuseTex * c0;
+	vec3 night = fNightScale * diffuseNightTex * (1.0 - c0);
+	
+	gl_FragColor = vec4(c1, 1.0) + vec4(day + night, 1.0);
+}`;
+// ---- Astronomical Calculations ----
+function getJulianDate(date) {
+    return date.getTime() / 86400000 + 2440587.5;
+}
+
+function getSunPosition(julianDate) {
+    const n = julianDate - 2451545.0;
+    const L = (280.460 + 0.9856474 * n) % 360;
+    const g = ((357.528 + 0.9856003 * n) % 360) * Math.PI / 180;
+    const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * Math.PI / 180;
+    const x = Math.cos(lambda);
+    const y = Math.sin(lambda) * Math.cos(23.44 * Math.PI / 180); // obliquity
+    const z = Math.sin(lambda) * Math.sin(23.44 * Math.PI / 180);
+    return new THREE.Vector3(x, z, y); // Adjusted for Three.js coordinate system
+}
+
+function getEarthRotation(date) {
+    const millisecondsPerDay = 86400000;
+    const siderealDay = 23.93447 * 3600 * 1000; // milliseconds
+    const j2000 = new Date('2000-01-01T12:00:00Z');
+    const timeSinceJ2000 = date.getTime() - j2000.getTime();
+    const rotations = timeSinceJ2000 / siderealDay;
+    return (rotations * 2 * Math.PI) % (2 * Math.PI);
+}
+
+// ---- Physics Constants and Orbit Propagator ----
+const PHYSICS = {
+    MU: 3.986004418e14, // Earth's gravitational parameter (m³/s²)
+    EARTH_RADIUS: 6371000, // Earth radius in meters
+    EARTH_RADIUS_KM: 6371, // Earth radius in kilometers
+    J2: 1.08262668e-3, // J2 perturbation coefficient
+    OMEGA_EARTH: 7.2921159e-5 // Earth's rotation rate (rad/s)
+};
+
+const CoordinateTransforms = {
+    eciToEcef(x_eci, y_eci, z_eci, time) {
+        const theta = PHYSICS.OMEGA_EARTH * time;
+        const cosTheta = Math.cos(theta);
+        const sinTheta = Math.sin(theta);
+        return {
+            x_ecef: cosTheta * x_eci + sinTheta * y_eci,
+            y_ecef: -sinTheta * x_eci + cosTheta * y_eci,
+            z_ecef: z_eci
+        };
+    },
+    ecefToGeodetic(x, y, z) {
+        const a = PHYSICS.EARTH_RADIUS;
+        const e2 = 0.00669437999014;
+        const p = Math.sqrt(x * x + y * y);
+        const lat = Math.atan2(z, p * (1 - e2));
+        const lng = Math.atan2(y, x);
+        const alt = Math.sqrt(x * x + y * y + z * z) - a;
+        return { lat, lng, alt };
+    }
+};
+
+class OrbitPropagator {
+    static propagateAll(satellites, time) {
+        if (!Array.isArray(satellites) || satellites.length === 0) return [];
+        try {
+            return satellites.map(sat => this.propagateSingle(sat, time));
+        } catch (error) {
+            console.error('Error propagating satellites:', error);
+            return [];
+        }
+    }
+    static propagateSingle(satellite, time) {
+        const dt = time - satellite.epoch;
+        const { a, e, i, raan, argp, M0, name, type } = satellite;
+        const n0 = Math.sqrt(PHYSICS.MU / (a * a * a));
+        const j2Factor = (n0 * PHYSICS.EARTH_RADIUS * PHYSICS.EARTH_RADIUS * PHYSICS.J2) /
+                        (a * a * Math.pow(1 - e * e, 2));
+        const dRaanDt = -1.5 * j2Factor * Math.cos(i);
+        const dArgpDt = 0.75 * j2Factor * (4 - 5 * Math.pow(Math.sin(i), 2));
+        const dMDt = 0.75 * j2Factor * Math.sqrt(1 - e * e) * (2 - 3 * Math.pow(Math.sin(i), 2));
+        const raan_t = raan + dRaanDt * dt;
+        const argp_t = argp + dArgpDt * dt;
+        const M_t = M0 + (n0 + dMDt) * dt;
+        const E = this.solveKeplerEquation(M_t, e);
+        const sinE = Math.sin(E);
+        const cosE = Math.cos(E);
+        const sqrtOneMinusE2 = Math.sqrt(1 - e * e);
+        const nu = 2 * Math.atan2(sqrtOneMinusE2 * sinE, cosE + e);
+        const r = a * (1 - e * cosE);
+        const cosNu = Math.cos(nu);
+        const sinNu = Math.sin(nu);
+        const x_orb = r * cosNu;
+        const y_orb = r * sinNu;
+        const cosRaan = Math.cos(raan_t);
+        const sinRaan = Math.sin(raan_t);
+        const cosArgp = Math.cos(argp_t);
+        const sinArgp = Math.sin(argp_t);
+        const cosI = Math.cos(i);
+        const sinI = Math.sin(i);
+        const x_eci = (cosRaan * cosArgp - sinRaan * sinArgp * cosI) * x_orb +
+                     (-cosRaan * sinArgp - sinRaan * cosArgp * cosI) * y_orb;
+        const y_eci = (sinRaan * cosArgp + cosRaan * sinArgp * cosI) * x_orb +
+                     (-sinRaan * sinArgp + cosRaan * cosArgp * cosI) * y_orb;
+        const z_eci = (sinArgp * sinI) * x_orb + (cosArgp * sinI) * y_orb;
+        const { x_ecef, y_ecef, z_ecef } = CoordinateTransforms.eciToEcef(x_eci, y_eci, z_eci, time);
+        return {
+            name,
+            type,
+            position: new THREE.Vector3(
+                x_ecef / PHYSICS.EARTH_RADIUS,
+                z_ecef / PHYSICS.EARTH_RADIUS,
+                -y_ecef / PHYSICS.EARTH_RADIUS
+            ),
+            altitude: (Math.sqrt(x_ecef * x_ecef + y_ecef * y_ecef + z_ecef * z_ecef) - PHYSICS.EARTH_RADIUS) / 1000
+        };
+    }
+    static solveKeplerEquation(M, e) {
+        M = M % (2 * Math.PI);
+        if (M < 0) M += 2 * Math.PI;
+        let E = e < 0.8 ? M : Math.PI;
+        for (let i = 0; i < 8; i++) {
+            const f = E - e * Math.sin(E) - M;
+            const df = 1 - e * Math.cos(E);
+            const deltaE = f / df;
+            E -= deltaE;
+            if (Math.abs(deltaE) < 1e-12) break;
+        }
+        return E;
+    }
+    static generateDefaultConstellation(count, currentTime) {
+        const satellites = [];
+        const epoch = currentTime;
+        try {
+            const leoCount = Math.floor(count * 0.6);
+            for (let i = 0; i < leoCount; i++) {
+                satellites.push({ name: `LEO-${i + 1}`, type: 'LEO', a: PHYSICS.EARTH_RADIUS + 400000 + Math.random() * 200000, e: Math.random() * 0.02, i: (53 + Math.random() * 10) * Math.PI / 180, raan: Math.random() * 2 * Math.PI, argp: Math.random() * 2 * Math.PI, M0: Math.random() * 2 * Math.PI, epoch });
+            }
+            // const meoCount = Math.floor(count * 0.25);
+            // for (let i = 0; i < meoCount; i++) {
+            //     satellites.push({ name: `MEO-${i + 1}`, type: 'MEO', a: PHYSICS.EARTH_RADIUS + 20200000, e: Math.random() * 0.05, i: (55 + Math.random() * 10) * Math.PI / 180, raan: Math.random() * 2 * Math.PI, argp: Math.random() * 2 * Math.PI, M0: Math.random() * 2 * Math.PI, epoch });
+            // }
+            // const geoCount = count - leoCount - meoCount;
+            // for (let i = 0; i < geoCount; i++) {
+            //     satellites.push({ name: `GEO-${i + 1}`, type: 'GEO', a: PHYSICS.EARTH_RADIUS + 35786000, e: Math.random() * 0.01, i: Math.random() * 5 * Math.PI / 180, raan: Math.random() * 2 * Math.PI, argp: Math.random() * 2 * Math.PI, M0: Math.random() * 2 * Math.PI, epoch });
+            // }
+            return satellites;
+        } catch (error) {
+            console.error('Error generating constellation:', error);
+            return [];
+        }
+    }
+}
+
+// ---- TLE Loading Functions ----
+function addSatFromElements(el) {
+    satellites.push({
+        name: el.name || 'TLE Sat',
+        type: 'TLE',
+        a: el.a,          // semi-major axis (m)
+        e: el.e,
+        i: el.i,
+        raan: el.raan,
+        argp: el.argp,
+        M0: el.M0,
+        epoch: el.epoch   // seconds since Unix epoch
+    });
+}
+function loadKeplerCSV(txt){
+    // Robust CSV loader with validation – prevents simulation crashes on malformed rows
+    const clean = str => str.trim().toLowerCase().replace(/[[\]]/g, ''); // remove brackets [] and whitespace
+    const lines = txt.trim().split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { alert('CSV appears empty'); return; }
+
+    const header = lines[0].split(',').map(clean);
+
+    function colIndex(nameAliases){
+        for (const n of nameAliases){
+            const idx = header.findIndex(h => h === n);
+            if(idx !== -1) return idx;
+        }
+        return -1;
+    }
+    const idx = {
+        name: colIndex(['name']),
+        a:   colIndex(['a_km','a']),
+        e:   colIndex(['e']),
+        i:   colIndex(['i_deg','i']),
+        raan: colIndex(['raan_deg','raan']),
+        argp: colIndex(['argp_deg','argp']),
+        ma:  colIndex(['ma_deg','ma']),
+        epoch: header.findIndex(h => h.includes('epoch'))
+    };
+
+    // Basic required columns check
+    if(idx.a === -1 || idx.e === -1 || idx.i === -1){
+        alert('CSV is missing one or more required columns: a/e/i');
+        return;
+    }
+
+    const nowSec = simulatedTime/1000;
+    let added = 0, skipped = 0;
+    for(let l = 1; l < lines.length; l++){
+        const parts = lines[l].split(',').map(p => p.trim());
+        if(parts.length < 6){ skipped++; continue; }
+
+        const aKm = parseFloat(parts[idx.a]);
+        const ecc = parseFloat(parts[idx.e]);
+        const iDeg = parseFloat(parts[idx.i]);
+        if(!isFinite(aKm) || aKm <= 6371){ skipped++; continue; } // must be > Earth radius
+        if(isNaN(ecc) || isNaN(iDeg)){ skipped++; continue; }
+
+        const raanDeg = idx.raan!==-1 ? parseFloat(parts[idx.raan]) : 0;
+        const argpDeg = idx.argp!==-1 ? parseFloat(parts[idx.argp]) : 0;
+        const maDeg   = idx.ma !==-1 ? parseFloat(parts[idx.ma])   : 0;
+        const epochVal = (idx.epoch!==-1 && parts[idx.epoch]) ? parseFloat(parts[idx.epoch]) : nowSec;
+
+        satellites.push({
+            name: (idx.name!==-1 && parts[idx.name]) ? parts[idx.name] : `CSV Sat ${added+1}`,
+            type:'CUSTOM',
+            a: aKm*1000,
+            e: isNaN(ecc)?0:ecc,
+            i: isNaN(iDeg)?0:iDeg*Math.PI/180,
+            raan: isNaN(raanDeg)?0:raanDeg*Math.PI/180,
+            argp: isNaN(argpDeg)?0:argpDeg*Math.PI/180,
+            M0: isNaN(maDeg)?0:maDeg*Math.PI/180,
+            epoch: isFinite(epochVal)?epochVal:nowSec
+        });
+        added++;
+    }
+
+    if(added){
+        createSatelliteMeshes();
+        createSensorCones();
+        alert(`Loaded ${added} CSV satellites${skipped?`, skipped ${skipped} invalid rows`:''}`);
+    } else {
+        alert('No valid satellites found in CSV.');
+    }
+}
+    /* Legacy duplicate CSV loader removed by Cascade
+    const lines=txt.trim().split(/\r?\n/);
+    if(lines.length<2) {alert('CSV appears empty');return;}
+    const header=lines[0].split(',').map(h=>h.trim().toLowerCase());
+    const idx={
+        name: header.indexOf('name'),
+        a: header.indexOf('a_km')!==-1?header.indexOf('a_km'):header.indexOf('a'),
+        e: header.indexOf('e'),
+        i: header.indexOf('i_deg')!==-1?header.indexOf('i_deg'):header.indexOf('i'),
+        raan: header.indexOf('raan_deg')!==-1?header.indexOf('raan_deg'):header.indexOf('raan'),
+        argp: header.indexOf('argp_deg')!==-1?header.indexOf('argp_deg'):header.indexOf('argp'),
+        ma: header.indexOf('ma_deg')!==-1?header.indexOf('ma_deg'):header.indexOf('ma'),
+        epoch: header.indexOf('epoch')
+    };
+    const nowSec = simulatedTime/1000;
+    let added=0;
+    for(let l=1;l<lines.length;l++){
+        const parts=lines[l].split(',').map(x=>x.trim());
+        if(parts.length<6) continue;
+        const a=parseFloat(parts[idx.a]); if(!a) continue;
+        const e=parseFloat(parts[idx.e]);
+        const i=parseFloat(parts[idx.i])*Math.PI/180;
+        const raan=parseFloat(parts[idx.raan])*Math.PI/180;
+        const argp=parseFloat(parts[idx.argp])*Math.PI/180;
+        const ma=parseFloat(parts[idx.ma])*Math.PI/180;
+        const epoch = idx.epoch!==-1 && parts[idx.epoch] ? parseFloat(parts[idx.epoch]) : nowSec;
+        satellites.push({
+            name: idx.name!==-1 && parts[idx.name] ? parts[idx.name] : ('CSV Sat '+(added+1)),
+            type:'CUSTOM',
+            a: a*1000,
+            e,i, raan, argp, M0: ma, epoch
+        });
+        added++;
+    }
+    // duplicate block end */
+
+function loadTLEText(txt) {
+    try {
+        const entries = TLEParser.parse(txt);
+        entries.forEach(addSatFromElements);
+        createSatelliteMeshes();
+        createSensorCones();
+        console.log(`Loaded ${entries.length} TLE satellites`);
+    } catch(err) { console.error('TLE parse error', err); }
+}
+function setupTLEUI() {
+    const fileEl=document.getElementById('tle-file');
+    if(fileEl){
+        fileEl.addEventListener('change', e=>{
+            const f=e.target.files[0]; if(!f) return;
+            const reader=new FileReader();
+            reader.onload=ev=>loadTLEText(ev.target.result);
+            reader.readAsText(f);
+        });
+    }
+    // CSV Kepler upload
+    const csvEl=document.getElementById('kep-csv-file');
+    if(csvEl){
+        csvEl.addEventListener('change', e=>{
+            const f=e.target.files[0]; if(!f) return;
+            const reader=new FileReader();
+            reader.onload=ev=>loadKeplerCSV(ev.target.result);
+            reader.readAsText(f);
+        });
+    }
+    const loadBtn=document.getElementById('load-tle-btn');
+    if(loadBtn){ loadBtn.addEventListener('click', ()=>{
+        const txt=document.getElementById('tle-text').value; loadTLEText(txt);
+    }); }
+    const addSatBtn=document.getElementById('add-satellite-btn');
+    if(addSatBtn){ addSatBtn.addEventListener('click', ()=>{
+        const aKm=parseFloat(document.getElementById('sat-a').value);
+        const e=parseFloat(document.getElementById('sat-e').value);
+        const iDeg=parseFloat(document.getElementById('sat-i').value);
+        const raanDeg=parseFloat(document.getElementById('sat-raan').value);
+        const argpDeg=parseFloat(document.getElementById('sat-argp').value);
+        const maDeg=parseFloat(document.getElementById('sat-ma').value);
+        satellites.push({
+            name: document.getElementById('sat-name').value||'Custom',
+            type:'CUSTOM',
+            a: (aKm*1000),
+            e,
+            i: iDeg*Math.PI/180,
+            raan: raanDeg*Math.PI/180,
+            argp: argpDeg*Math.PI/180,
+            M0: maDeg*Math.PI/180,
+            epoch: simulatedTime/1000
+        });
+        createSatelliteMeshes();
+        createSensorCones();
+    }); }
+}
+
+// ---- Constellation UI ----
+let currentConstellation=null;
+// ---- Bulk Filter UI ----
+function setupBulkFilterUI(){
+    const filterInput=document.getElementById('sat-filter');
+    const addBtn=document.getElementById('bulk-add-btn');
+    const remBtn=document.getElementById('bulk-rem-btn');
+    function getFiltered(){
+        const txt=(filterInput.value||'').toLowerCase();
+        if(!txt) return window.satellites;
+        return window.satellites.filter(s=> (s.name||'').toLowerCase().includes(txt));
+    }
+    function updateButtonStates(){
+        const enabled=!!currentConstellation;
+        addBtn.disabled=!enabled;
+        remBtn.disabled=!enabled;
+    }
+    filterInput.addEventListener('input', ()=>{
+        if(window.setSatFilter){ window.setSatFilter(filterInput.value); }
+    });
+    addBtn.addEventListener('click', ()=>{
+        if(!currentConstellation) return;
+        getFiltered().forEach(s=>assignSatellite(s,currentConstellation.name));
+        updateAllSatColors();
+        window.refreshSatTree && window.refreshSatTree();
+    });
+    remBtn.addEventListener('click', ()=>{
+        if(!currentConstellation) return;
+        getFiltered().filter(s=>s.constellation===currentConstellation.name).forEach(unassignSatellite);
+        updateAllSatColors();
+        window.refreshSatTree && window.refreshSatTree();
+    });
+    updateButtonStates();
+    // Also hook into constellation selection to enable buttons
+    window._updateBulkButtons=updateButtonStates;
+}
+
+function setupConstellationUI(){
+    const createBtn=document.getElementById('create-const-btn');
+    const listEl=document.getElementById('const-list');
+    function refreshSatChecklist(){
+        const box=document.getElementById('sat-checklist');
+        box.innerHTML='';
+        if(!currentConstellation) return;
+        satellites.forEach((sat,idx)=>{
+            const li=document.createElement('div');
+            li.style.display='flex';li.style.alignItems='center';li.style.fontSize='11px';li.style.margin='2px 0';
+            const chk=document.createElement('input');chk.type='checkbox';chk.style.marginRight='6px';
+            chk.checked=!!sat.constellation && sat.constellation===currentConstellation.name;
+            chk.onchange=()=>{
+                if(chk.checked){ assignSatellite(sat,currentConstellation.name); }
+                else { unassignSatellite(sat); }
+                updateAllSatColors(); refreshList(); // update counts
+            };
+            li.appendChild(chk);
+            const label=document.createElement('span');label.textContent=sat.name||('Sat '+idx);
+            li.appendChild(label);
+            box.appendChild(li);
+        });
+    }
+
+    function refreshList(){
+        listEl.innerHTML='';
+        constellations.forEach(c=>{
+            const div=document.createElement('div');
+            div.className='const-item';
+            if(currentConstellation && currentConstellation.name===c.name){
+                div.classList.add('selected');
+            }
+            div.innerHTML=`<span><span class="color-swatch" style="background:${c.color}"></span>${c.name} (${c.members.length})</span>`;
+            // click to select
+            div.onclick=()=>{
+                currentConstellation=c; if(window._updateBulkButtons) window._updateBulkButtons();
+                // show prompt to change colour
+                const newColor=prompt('Hex colour for '+c.name, c.color);
+                if(newColor){ updateConstellationColor(c.name,newColor); refreshList(); updateAllSatColors(); }
+            };
+            listEl.appendChild(div);
+        });
+    }
+    createBtn.addEventListener('click',()=>{
+        const name=document.getElementById('const-name').value.trim();
+        const color=document.getElementById('const-color').value;
+        if(!name) return;
+        addConstellation({name,color});
+        document.getElementById('const-name').value='';
+        refreshList();
+    });
+    refreshList();
+}
+
+function updateAllSatColors(){
+    const defaultColors = { LEO:'#00ff00', MEO:'#0088ff', GEO:'#ff8800', CUSTOM:'#ffffff', TLE:'#ffffff' };
+
+    for(let i=0;i<satellites.length;i++){
+        const sat=satellites[i];
+        if(!satelliteMeshes[i]) continue;
+        // decide color order: per-sat override > constellation > default by type
+        let color;
+        if(sat.overrideColor){
+            color = sat.overrideColor;
+        } else if(sat.constellation){
+            const c = constellations.find(x=>x.name === sat.constellation);
+            if(c) color = c.color;
+        }
+        if(!color){
+            color = defaultColors[sat.type] || '#ffffff';
+        }
+        // ensure material is unique to this mesh (avoid shared material side-effects)
+        if(!satelliteMeshes[i].userData || !satelliteMeshes[i].userData.uniqueMaterial){
+            satelliteMeshes[i].material = satelliteMeshes[i].material.clone();
+            satelliteMeshes[i].userData = { ...(satelliteMeshes[i].userData||{}), uniqueMaterial:true };
+        }
+        satelliteMeshes[i].material.color.set(color);
+
+    }
+}
+
+// ---- Satellite Functions ----
+function createSatellites(count) {
+    const currentTime = simulatedTime / 1000;
+    satellites = OrbitPropagator.generateDefaultConstellation(count, currentTime);
+    console.log(`Created ${satellites.length} satellites with realistic orbits`);
+}
+
+function createSatelliteMeshes() {
+    satelliteMeshes.forEach(mesh => scene.remove(mesh));
+    satelliteMeshes = [];
+    const materials = {
+        'LEO': new THREE.MeshBasicMaterial({ color: 0x00ff00 }),
+        'MEO': new THREE.MeshBasicMaterial({ color: 0x0088ff }),
+        'GEO': new THREE.MeshBasicMaterial({ color: 0xff8800 })
+    };
+    const satelliteGeometry = new THREE.BoxGeometry(0.005, 0.005, 0.005);
+    for (let i = 0; i < satellites.length; i++) {
+        const material = materials[satellites[i].type] || materials['LEO'];
+        const mesh = new THREE.Mesh(satelliteGeometry, material);
+        mesh.visible = showSatellites;
+        scene.add(mesh);
+        satelliteMeshes.push(mesh);
+    }
+}
+
+function createGroundStationMeshes(){
+    groundStationMeshes.forEach(m=>earth.remove(m));
+    groundStationMeshes=[];
+    // remove old debug lines
+    groundStationDebugLines.forEach(l=>scene.remove(l));
+    groundStationDebugLines=[];
+    const gsGeom = new THREE.OctahedronGeometry(0.02);
+    const gsMat = new THREE.MeshBasicMaterial({color:0xffff00});
+    groundStations.forEach(gs=>{
+        const {lat, lon} = gs;
+        const phi = (90 - lat) * Math.PI/180;
+        const theta = (lon ) * Math.PI/180;
+        const r = atmosphere.innerRadius + 0.005;
+        const x = r * Math.sin(phi)*Math.cos(theta);
+        const y = r * Math.cos(phi);
+        const z = r * Math.sin(phi)*Math.sin(theta);
+        const mesh = new THREE.Mesh(gsGeom, gsMat);
+        mesh.position.set(x,y,z);
+        earth.add(mesh);
+        groundStationMeshes.push(mesh);
+
+        // Debug line from Earth's center to ground station
+        const lineGeom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0,0,0),
+            mesh.position.clone()
+        ]);
+        const lineMat = new THREE.LineBasicMaterial({color:0xff00ff});
+        const line = new THREE.Line(lineGeom, lineMat);
+        scene.add(line);
+        groundStationDebugLines.push(line);
+
+        console.log('GS mesh added', mesh.position);
+    });
+}
+
+function createSensorCones() {
+    sensorCones.forEach(cone => scene.remove(cone));
+    sensorCones = [];
+    const baseConeHeight = 0.3;
+    const baseConeRadius = 0.1;
+    const coneGeometry = new THREE.ConeGeometry(baseConeRadius, baseConeHeight, 16);
+    coneGeometry.translate(0, -baseConeHeight / 2, 0);
+    const materials = {
+        'LEO': new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.1, side: THREE.FrontSide }),
+        'MEO': new THREE.MeshBasicMaterial({ color: 0x0088ff, transparent: true, opacity: 0.1, side: THREE.FrontSide }),
+        'GEO': new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.1, side: THREE.FrontSide })
+    };
+    for (let i = 0; i < satellites.length; i++) {
+        const material = materials[satellites[i].type] || materials['LEO'];
+        const cone = new THREE.Mesh(coneGeometry, material);
+        cone.visible = showCones;
+        scene.add(cone);
+        sensorCones.push(cone);
+    }
+}
+
+function updateSatellitePositions(timeSeconds) {
+    const propagatedSatellites = OrbitPropagator.propagateAll(satellites, timeSeconds);
+    for (let i = 0; i < propagatedSatellites.length; i++) {
+        if (!propagatedSatellites[i]) continue;
+        const { position } = propagatedSatellites[i];
+        if (satelliteMeshes[i]) {
+            satelliteMeshes[i].position.copy(position);
+        }
+        if (sensorCones[i]) {
+            const cone = sensorCones[i];
+            cone.position.copy(position);
+            const nadirDirection = new THREE.Vector3().copy(position).negate().normalize();
+            const coneAxis = new THREE.Vector3(0, -1, 0);
+            cone.quaternion.setFromUnitVectors(coneAxis, nadirDirection);
+            const altitude = position.length() - EARTHRADIUS;
+            const satRangeKm = satellites[i].overrideSensor?.range ?? coneRangeKm;
+            const satFov = satellites[i].overrideSensor?.fov ?? coneFov;
+            const coneHeightNorm = Math.min(satRangeKm / PHYSICS.EARTH_RADIUS_KM, 10);
+            const coneHeight = Math.min(coneHeightNorm, altitude);
+            const coneRadius = coneHeight * Math.tan((satFov * Math.PI / 180) / 2);
+            cone.scale.set(
+                coneRadius / 0.1,
+                coneHeight / 0.3,
+                coneRadius / 0.1
+            );
+        }
+    }
+}
+
+// ---- Earth Class ----
+class Earth3d extends THREE.Group {
+    static NAME = "Earth3d";
+    constructor(camera) {
+        super();
+        this.name = Earth3d.NAME;
+        this.ground = new THREE.Mesh(
+            new THREE.SphereGeometry(atmosphere.innerRadius, 64, 64),
+            new THREE.ShaderMaterial({
+                uniforms: AtmUniforms,
+                vertexShader: vertexGround,
+                fragmentShader: fragmentGround
+            }));
+        this.add(this.ground);
+        
+        this.sky = new THREE.Mesh(
+            new THREE.SphereGeometry(atmosphere.outerRadius, 64, 64),
+            new THREE.ShaderMaterial({
+                uniforms: AtmUniforms,
+                vertexShader: vertexSky,
+                fragmentShader: fragmentSky,
+                side: THREE.BackSide,
+                transparent: true,
+                depthWrite: false,
+            }));
+        this.add(this.sky);
+        
+        this._sunvect = new THREE.Vector3(1,0,0);
+        this.sunvect = new THREE.Vector3(1,0,0);
+        this.ground.material.uniforms.v3LightPosition.value = this._sunvect;
+        this.camera = camera;
+        this.parentObj = new THREE.Group();
+        this.cameracPs = new THREE.Vector3();
+        this.cameracPs.copy(this.camera.position);
+        this.cameracPs.sub(this.parentObj.position);
+        this.ground.material.uniforms.cPs.value = this.cameracPs;
+        this.axisY = new THREE.Vector3(0,1,0);
+    }
+    
+    update() {
+        this.cameracPs.copy(this.camera.position);
+        this.cameracPs.sub(this.parentObj.position);
+        this._sunvect.copy(this.sunvect);
+        this.cameracPs.applyAxisAngle(this.axisY,-this.rotation.y);
+        this._sunvect.applyAxisAngle(this.axisY,-this.rotation.y);
+        this.ground.material.uniforms.cPs.value = this.cameracPs;
+        this.ground.material.uniforms.v3LightPosition.value = this._sunvect;
+        this.sky.material.uniforms.cPs.value = this.cameracPs;
+        this.sky.material.uniforms.v3LightPosition.value = this._sunvect;
+    }
+    
+    setSun(sun) {
+        this.sunvect.copy(sun);
+    }
+    
+    loadTextures(texDay, texNight, maxAnisotropy = 16) {
+        texDay.anisotropy = maxAnisotropy;
+        texNight.anisotropy = maxAnisotropy;
+        AtmUniforms.tDiffuse.value = texDay;
+        AtmUniforms.tDiffuseNight.value = texNight;
+    }
+}
+
+function updateUI(currentTime, sunPos, earthRot) {
+    document.getElementById('utc-time').textContent = currentTime.toISOString().replace('T', ' ').substring(11, 19) + ' UTC';
+    const sunEl=document.getElementById('sun-pos'); if(sunEl) sunEl.textContent = `(${sunPos.x.toFixed(2)}, ${sunPos.y.toFixed(2)}, ${sunPos.z.toFixed(2)})`;
+    const erEl=document.getElementById('earth-rot'); if(erEl) erEl.textContent = `${(earthRot * 180 / Math.PI).toFixed(1)}°`;
+}
+
+// ---- Main Functions ----
+init();
+animate();
+
+// ---- UI Functions ----
+window.toggleRealTime = function() {
+    realTimeMode = !realTimeMode;
+    // When switching back to real-time, reset the simulated time to prevent a time jump.
+    if (realTimeMode) {
+        simulatedTime = Date.now();
+    }
+    clock.getDelta(); // Reset the clock's internal start time to avoid a large jump on the first frame.
+    document.getElementById('time-toggle-button').textContent = realTimeMode ? 'Toggle Manual Time' : 'Toggle Real-Time';
+}
+
+window.resetView = function() {
+    controls.target.set(0, 0, 0);
+    camera.position.set(3, 3, 3);
+    controls.update();
+}
+
+window.updateTimeSpeed = function() {
+    timeSpeed = parseFloat(document.getElementById('timeSpeed').value);
+    document.getElementById('speedValue').textContent = timeSpeed.toFixed(1) + 'x';
+}
+
+window.updateSatellites = function() {
+    satelliteCount = parseInt(document.getElementById('satCount').value);
+    document.getElementById('satCountValue').textContent = satelliteCount.toString();
+    createSatellites(satelliteCount);
+    createSatelliteMeshes();
+    createSensorCones();
+}
+
+window.updateConeFov = function() {
+    coneFov = parseFloat(document.getElementById('coneFov').value);
+    document.getElementById('fovValue').textContent = coneFov.toFixed(0) + '°';
+    refreshConeScales();
+}
+
+// ---- UI handlers ----
+// Ground station add button
+window.addEventListener('DOMContentLoaded',()=>{
+    const btn=document.getElementById('add-gs-btn');
+    if(btn){ btn.onclick=()=>{
+        const name=document.getElementById('gs-name').value.trim()||'Ground Station';
+        const lat=parseFloat(document.getElementById('gs-lat').value)||0;
+        const lon=parseFloat(document.getElementById('gs-lon').value)||0;
+        groundStations.push({name,lat,lon});
+        createGroundStationMeshes();
+        if(window.refreshSatTree) window.refreshSatTree();
+        document.getElementById('gs-name').value='';
+    }; }
+});
+
+window.updateConeRange = function() {
+    coneRangeKm = parseFloat(document.getElementById('coneRange').value);
+    document.getElementById('rangeValue').textContent = coneRangeKm.toFixed(0) + ' km';
+    refreshConeScales();
+}
+
+// Recalculate cone scales immediately when FOV or range changes
+function refreshConeScales(){
+    // Ensure we have current satellite positions
+    const timeSeconds = simulatedTime / 1000;
+    const propagatedSatellites = OrbitPropagator.propagateAll(satellites, timeSeconds);
+    for(let i=0;i<propagatedSatellites.length;i++){
+        const entry = propagatedSatellites[i];
+        if(!entry || !sensorCones[i]) continue;
+        const pos = entry.position;
+        const altitude = pos.length() - EARTHRADIUS;
+        const satRangeKm = satellites[i].overrideSensor?.range ?? coneRangeKm;
+        const satFov = satellites[i].overrideSensor?.fov ?? coneFov;
+        const coneHeightNorm = Math.min(satRangeKm / PHYSICS.EARTH_RADIUS_KM, 10);
+        const coneHeight = Math.min(coneHeightNorm, altitude);
+        const coneRadius = coneHeight * Math.tan((satFov * Math.PI / 180)/2);
+        sensorCones[i].scale.set(
+            coneRadius / 0.1,
+            coneHeight / 0.3,
+            coneRadius / 0.1
+        );
+    }
+}
+
+window.toggleCones = function() {
+    showCones = !showCones;
+    sensorCones.forEach(cone => cone.visible = showCones);
+}
+
+// Toggle satellite mesh visibility
+window.toggleSatellites = function(){
+    showSatellites = !showSatellites;
+    satelliteMeshes.forEach(m=>m.visible = showSatellites);
+}
+
+// Smooth camera pan to a target (satellite or ground station) and orient nadir
+window.zoomToSatellite = function(obj){
+    // Determine 3-D position of the target
+    let targetPos;
+    // Case 1: satellite data object (we have mesh)
+    const satIdx = satellites.indexOf(obj);
+    if(satIdx !== -1 && satelliteMeshes[satIdx]){
+        targetPos = satelliteMeshes[satIdx].position.clone();
+    } else if(obj && obj.position) { // Case 2: a mesh provided directly
+        targetPos = obj.position.clone();
+    } else if(obj && obj.lat !== undefined && obj.lon !== undefined){ // Case 3: ground-station {lat,lon}
+        const phi = (90 - obj.lat) * Math.PI/180;
+        const theta = (obj.lon + 180) * Math.PI/180;
+        const r = atmosphere.innerRadius + 0.005;
+        targetPos = new THREE.Vector3(
+            r * Math.sin(phi)*Math.cos(theta),
+            r * Math.cos(phi),
+            r * Math.sin(phi)*Math.sin(theta)
+        );
+    }
+    if(!targetPos) return;
+
+    // Desired camera position: radially outward from Earth so we look nadir
+    const radial = targetPos.clone().normalize();
+    const closeDist = 0.1; // 0.1 Earth radii from target
+    const desiredCamPos = targetPos.clone().add(radial.multiplyScalar(closeDist));
+
+    // Convert start & end camera positions to spherical coords (centered on Earth)
+    const sphStart = new THREE.Spherical().setFromVector3(camera.position.clone());
+    const sphEnd   = new THREE.Spherical().setFromVector3(desiredCamPos);
+    // Ensure shortest azimuthal path
+    let deltaTheta = sphEnd.theta - sphStart.theta;
+    if(Math.abs(deltaTheta) > Math.PI){ deltaTheta -= Math.sign(deltaTheta)*Math.PI*2; }
+    const duration = 1200; // ms
+    let start = null;
+    function animate(ts){
+        if(start===null) start = ts;
+        const alpha = Math.min((ts-start)/duration,1);
+        const ease = alpha<0.5 ? 2*alpha*alpha : -1+(4-2*alpha)*alpha; // easeInOutQuad
+        const curSph = new THREE.Spherical();
+        curSph.radius = THREE.MathUtils.lerp(sphStart.radius, sphEnd.radius, ease);
+        curSph.theta  = sphStart.theta + deltaTheta*ease;
+        curSph.phi    = THREE.MathUtils.lerp(sphStart.phi,  sphEnd.phi,  ease);
+        camera.position.setFromSpherical(curSph);
+        // smoothly move target too
+        controls.target.lerpVectors(controls.target.clone(), targetPos, ease);
+        controls.update();
+        if(alpha<1) requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+}
+
+function onCanvasContextMenu(event){
+    event.preventDefault();
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouseNDC.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseNDC.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouseNDC, camera);
+    const intersects = raycaster.intersectObjects(satelliteMeshes);
+    if(intersects.length===0){ hideSatMenu(); return; }
+    const mesh = intersects[0].object;
+    const sat = mesh.userData?.satellite || satellites[ satelliteMeshes.indexOf(mesh) ];
+    showSatMenu(sat,event.clientX,event.clientY);
+}
+function showSatMenu(sat, x, y){
+    const menu = document.getElementById('sat-menu');
+    menu.innerHTML = `<div class='menu-item' style='pointer-events:none;font-weight:bold;'>${sat.name||'Satellite'}</div>`;
+    addItem('Set Colour...', ()=>{
+        const colorInput=document.createElement('input');
+        colorInput.type='color';
+        colorInput.style.display='none';
+        document.body.appendChild(colorInput);
+        colorInput.oninput=(e)=>{
+            sat.overrideColor = e.target.value;
+            updateAllSatColors();
+            document.body.removeChild(colorInput);
+        };
+        colorInput.click();
+    });
+    addItem('Assign to Constellation...', ()=>{
+        const name=prompt('Assign to which constellation?\nAvailable: '+constellations.map(c=>c.name).join(', '));
+        if(!name) return;
+        const exists=constellations.find(c=>c.name===name);
+        if(!exists){ alert('No such constellation'); return; }
+        assignSatellite(sat,name);
+        updateAllSatColors(); window.refreshSatTree&&refreshSatTree();
+    });
+    if(sat.constellation){
+        addItem('Remove from Constellation', ()=>{
+            unassignSatellite(sat); updateAllSatColors(); if(window.refreshSatTree) window.refreshSatTree();
+        });
+    }
+    addItem('Sensor Override...', ()=>{
+        const fov=prompt('Field of view (deg)?', sat.overrideSensor?.fov || '');
+        if(fov===null) return;
+        const range=prompt('Range (km)?', sat.overrideSensor?.range || '');
+        if(range===null) return;
+        sat.overrideSensor={fov:parseFloat(fov), range:parseFloat(range)};
+        refreshConeScales();
+    });
+    if(sat.overrideColor||sat.overrideSensor){
+        addItem('Clear Overrides', ()=>{
+            delete sat.overrideColor; delete sat.overrideSensor; updateAllSatColors();
+        });
+    }
+    function addItem(label, handler){
+        const div=document.createElement('div');div.className='menu-item';div.textContent=label;div.onclick=()=>{hideSatMenu();handler();};menu.appendChild(div);
+    }
+    menu.style.left = x+"px";
+    menu.style.top = y+"px";
+    menu.style.display = 'block';
+}
+function hideSatMenu(){
+    const menu = document.getElementById('sat-menu');
+    menu.style.display='none';
+}
+
+function init() {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+    // Right-click context menu handler
+    renderer.domElement.addEventListener('contextmenu', onCanvasContextMenu);
+    document.addEventListener('click', ()=>{ hideSatMenu(); });
+
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.01, 1000);
+    camera.position.set(3, 3, 3);
+
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    // Initialize the clock and set the simulation start time
+    clock = new THREE.Clock();
+    simulatedTime = Date.now();
+
+    const texldr = new THREE.TextureLoader();
+    const diffuse = texldr.load('https://i.imgur.com/uIhmW2d.jpg');
+    const diffuseNight = texldr.load('https://i.imgur.com/SUr9tYs.gif');
+    
+    earth = new Earth3d(camera);
+    earth.loadTextures(diffuse, diffuseNight);
+    scene.add(earth);
+    earth.parentObj = earth;
+
+    createSatellites(satelliteCount);
+    createSatelliteMeshes();
+    createSensorCones();
+
+    sunVector = new THREE.Vector3(1, 0, 0);
+    
+    //scene.add(new THREE.AxesHelper(2));
+    setupTLEUI();
+    setupConstellationUI();
+    window.satellites = satellites;
+    initTree('sat-tree');
+    setupBulkFilterUI();
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    // --- CORRECTED TIME LOGIC ---
+    // Get time delta since last frame
+    const delta = clock.getDelta();
+    
+    if (realTimeMode) {
+        // In real-time mode, sync to the actual system time
+        simulatedTime = Date.now();
+    } else {
+        // In manual mode, advance our simulated time based on the frame delta and speed multiplier
+        simulatedTime += delta * timeSpeed * 1000; // delta is in seconds, convert to ms
+    }
+
+    // All calculations will now use a single, consistent time source
+    const currentTime = new Date(simulatedTime);
+    const timeInSeconds = simulatedTime / 1000;
+    
+    const julianDate = getJulianDate(currentTime);
+    sunVector = getSunPosition(julianDate);
+    earth.setSun(sunVector);
+    
+    const earthRotation = getEarthRotation(currentTime);
+    earth.rotation.y = earthRotation;
+    
+    earth.update();
+    
+    // Use the unified time in seconds for satellite propagation
+    updateSatellitePositions(timeInSeconds);
+    // ensure menu follows if camera moves? (no need for static menu)
+    
+    controls.update();
+    renderer.render(scene, camera);
+    
+    updateUI(currentTime, sunVector, earthRotation);
+}
+
+window.addEventListener('resize', function() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+<div id="sat-menu" class="context-menu"></div>
+</body>
+</html>
