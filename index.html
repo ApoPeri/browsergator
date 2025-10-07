@@ -698,13 +698,21 @@ function getSunPosition(julianDate) {
 }
 
 function getEarthRotation(date) {
-    const millisecondsPerDay = 86400000;
-    const siderealDay = 23.93447 * 3600 * 1000; // milliseconds
-    const j2000 = new Date('2000-01-01T12:00:00Z');
-    const timeSinceJ2000 = date.getTime() - j2000.getTime();
-    const rotations = timeSinceJ2000 / siderealDay;
-    return (rotations * 2 * Math.PI) % (2 * Math.PI);
-}
+            // Calculate Julian centuries from J2000.0
+            const jd = getJulianDate(date);
+            const T = (jd - 2451545.0) / 36525.0;
+            
+            // Calculate GMST in degrees
+            let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 
+                      0.000387933 * T * T - T * T * T / 38710000.0;
+            
+            // Normalize to 0-360 range
+            gmst = gmst % 360;
+            if (gmst < 0) gmst += 360;
+            
+            // Convert to radians and return (negative because Earth rotates east)
+            return -(gmst * Math.PI / 180);
+        }
 
 // ---- Physics Constants and Orbit Propagator ----
 const PHYSICS = {
