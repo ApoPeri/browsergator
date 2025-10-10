@@ -711,7 +711,7 @@ function getEarthRotation(date) {
             if (gmst < 0) gmst += 360;
             
             // Convert to radians and return (negative because Earth rotates east)
-            return -(gmst * Math.PI / 180);
+            return (gmst * Math.PI / 180);
         }
 
 // ---- Physics Constants and Orbit Propagator ----
