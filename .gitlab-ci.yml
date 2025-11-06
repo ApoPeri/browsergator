@@ -1,0 +1,79 @@
+stages:
+  - update_catalog
+
+variables:
+  TLE_URL: "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"
+  CATALOG_FILE: "fullcatalog.txt"
+
+update_satellite_catalog:
+  stage: update_catalog
+  image: alpine:latest
+  only:
+    - schedules
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - echo "🛰️  Updating satellite catalog from CelesTrak..."
+    - echo "📅 Current date: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+    - |
+      # Fetch the latest TLE data
+      echo "📡 Downloading from: $TLE_URL"
+      curl -f -s -o "$CATALOG_FILE" "$TLE_URL"
+      
+      if [ $? -eq 0 ]; then
+        # Count satellites in the catalog
+        SATELLITE_COUNT=$(grep -c '^1 ' "$CATALOG_FILE" 2>/dev/null || echo "0")
+        FILE_SIZE=$(stat -c%s "$CATALOG_FILE" 2>/dev/null || stat -f%z "$CATALOG_FILE" 2>/dev/null || echo "0")
+        
+        echo "✅ Successfully downloaded catalog:"
+        echo "   📊 Satellites: $SATELLITE_COUNT"
+        echo "   📦 File size: $FILE_SIZE bytes"
+        echo "   📋 File: $CATALOG_FILE"
+        
+        # Add timestamp to the catalog
+        echo "# Updated: $(date '+%Y-%m-%d %H:%M:%S UTC')" | cat - "$CATALOG_FILE" > temp && mv temp "$CATALOG_FILE"
+        echo "# Source: $TLE_URL" | cat - "$CATALOG_FILE" > temp && mv temp "$CATALOG_FILE"
+        
+      else
+        echo "❌ Failed to download TLE data"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - $CATALOG_FILE
+    expire_in: 1 week
+    name: "satellite-catalog-$CI_COMMIT_SHORT_SHA"
+  cache:
+    paths:
+      - $CATALOG_FILE
+    key: "satellite-catalog"
+
+# Manual trigger for immediate update
+update_catalog_manual:
+  stage: update_catalog
+  image: alpine:latest
+  when: manual
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - echo "🔄 Manual catalog update triggered..."
+    - |
+      # Fetch the latest TLE data
+      curl -f -s -o "$CATALOG_FILE" "$TLE_URL"
+      
+      if [ $? -eq 0 ]; then
+        SATELLITE_COUNT=$(grep -c '^1 ' "$CATALOG_FILE" 2>/dev/null || echo "0")
+        echo "✅ Manual update complete: $SATELLITE_COUNT satellites"
+        
+        # Add timestamp
+        echo "# Updated: $(date '+%Y-%m-%d %H:%M:%S UTC') (MANUAL)" | cat - "$CATALOG_FILE" > temp && mv temp "$CATALOG_FILE"
+        echo "# Source: $TLE_URL" | cat - "$CATALOG_FILE" > temp && mv temp "$CATALOG_FILE"
+      else
+        echo "❌ Manual update failed"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - $CATALOG_FILE
+    expire_in: 1 week
+    name: "satellite-catalog-manual-$CI_COMMIT_SHORT_SHA"

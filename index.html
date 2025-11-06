@@ -72,7 +72,8 @@
     {
         "imports": {
             "three": "https://unpkg.com/three@0.157.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/"
+            "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/",
+            "solar-calculator": "https://esm.sh/solar-calculator"
         }
     }
     </script>
@@ -272,6 +273,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TLEParser } from './tle-parser.js';
 import { constellations, addConstellation, assignSatellite, unassignSatellite, updateConstellationColor } from './constellations.js';
 import { initTree } from './satellite-tree.js';
+import * as solar from 'solar-calculator';
 
 let renderer, scene, camera, controls, earth, sunVector;
 let clock; // To manage frame time deltas
@@ -681,12 +683,48 @@ void main (void)
 	
 	gl_FragColor = vec4(c1, 1.0) + vec4(day + night, 1.0);
 }`;
-// ---- Astronomical Calculations ----
+// Offset so the texture's prime meridian matches the solar-calculator 0° longitude
+const TEX_OFFSET = -Math.PI / 2;
+
+const DEFAULT_TEX = {
+  day: 'https://raw.githubusercontent.com/Abbe98/Inside-Equirectangular-Earth/gh-pages/earth8k.jpg',
+  night: 'https://eoimages.gsfc.nasa.gov/images/imagerecords/79000/79765/dnb_land_ocean_ice.2012.3600x1800.jpg'
+};
+
+// Solar Calculation Function
+const getSunPosition = date => {
+  const dt = date.getTime(); 
+  const day = new Date(+dt).setUTCHours(0, 0, 0, 0); 
+  const t = solar.century(date);
+  const longitude = (day - dt) / 864e5 * 360 - 180; 
+  const eot = solar.equationOfTime(t);
+  const decl = solar.declination(t);
+  return [longitude - eot / 4, decl];
+};
+
+// Legacy functions still needed for animation loop
 function getJulianDate(date) {
     return date.getTime() / 86400000 + 2440587.5;
 }
 
-function getSunPosition(julianDate) {
+function getEarthRotation(date) {
+    // Calculate Julian centuries from J2000.0
+    const jd = getJulianDate(date);
+    const T = (jd - 2451545.0) / 36525.0;
+    
+    // Calculate GMST in degrees
+    let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 
+              0.000387933 * T * T - T * T * T / 38710000.0;
+    
+    // Normalize to 0-360 range
+    gmst = gmst % 360;
+    if (gmst < 0) gmst += 360;
+    
+    // Convert to radians and return (negative because Earth rotates east)
+    return (gmst * Math.PI / 180);
+}
+
+function getSunPositionLegacy(julianDate) {
     const n = julianDate - 2451545.0;
     const L = (280.460 + 0.9856474 * n) % 360;
     const g = ((357.528 + 0.9856003 * n) % 360) * Math.PI / 180;
@@ -697,22 +735,75 @@ function getSunPosition(julianDate) {
     return new THREE.Vector3(x, z, y); // Adjusted for Three.js coordinate system
 }
 
-function getEarthRotation(date) {
-            // Calculate Julian centuries from J2000.0
-            const jd = getJulianDate(date);
-            const T = (jd - 2451545.0) / 36525.0;
-            
-            // Calculate GMST in degrees
-            let gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 
-                      0.000387933 * T * T - T * T * T / 38710000.0;
-            
-            // Normalize to 0-360 range
-            gmst = gmst % 360;
-            if (gmst < 0) gmst += 360;
-            
-            // Convert to radians and return (negative because Earth rotates east)
-            return (gmst * Math.PI / 180);
-        }
+// Custom Day/Night Shader
+const dayNightShader = {
+  uniforms: {
+    dayTexture: { value: null },
+    nightTexture: { value: null },
+    sunPosition: { value: new THREE.Vector2(0, 0) },
+    globeRotation: { value: new THREE.Vector2(0, 0) }
+  },
+  vertexShader: `
+    varying vec3 vNormal;
+    varying vec2 vUv;
+    
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    #define PI 3.141592653589793
+    
+    uniform sampler2D dayTexture;
+    uniform sampler2D nightTexture;
+    uniform vec2 sunPosition;
+    uniform vec2 globeRotation;
+    
+    varying vec3 vNormal;
+    varying vec2 vUv;
+
+    float toRad(float a) {
+      return a * PI / 180.0;
+    }
+
+    vec3 Polar2Cartesian(vec2 c) { // c = [lng, lat]
+      float theta = toRad(90.0 - c.x); 
+      float phi = toRad(90.0 - c.y);   
+      return vec3(
+        sin(phi) * cos(theta), 
+        cos(phi),              
+        sin(phi) * sin(theta)  
+      );
+    }
+
+    void main() {
+      float invLon = toRad(globeRotation.x);
+      float invLat = -toRad(globeRotation.y);
+      
+      mat3 rotX = mat3(
+        1.0, 0.0, 0.0,
+        0.0, cos(invLat), -sin(invLat),
+        0.0, sin(invLat), cos(invLat)
+      );
+      mat3 rotY = mat3(
+        cos(invLon), 0.0, sin(invLon),
+        0.0, 1.0, 0.0,
+        -sin(invLon), 0.0, cos(invLon)
+      );
+      
+      vec3 rotatedSunDirection = rotX * rotY * Polar2Cartesian(sunPosition);
+      float intensity = dot(normalize(vNormal), normalize(rotatedSunDirection));
+      
+      vec4 dayColor = texture2D(dayTexture, vUv);
+      vec4 nightColor = texture2D(nightTexture, vUv);
+      
+      float blendFactor = smoothstep(-0.1, 0.1, intensity);
+      gl_FragColor = mix(nightColor, dayColor, blendFactor);
+    }
+  `
+};
 
 // ---- Physics Constants and Orbit Propagator ----
 const PHYSICS = {
@@ -1256,15 +1347,25 @@ class Earth3d extends THREE.Group {
     constructor(camera) {
         super();
         this.name = Earth3d.NAME;
+        
+        // Earth with day/night shader
+        this._earthUniforms = dayNightShader.uniforms;
+        const earthMat = new THREE.ShaderMaterial({
+            uniforms: this._earthUniforms,
+            vertexShader: dayNightShader.vertexShader,
+            fragmentShader: dayNightShader.fragmentShader
+        });
+        
         this.ground = new THREE.Mesh(
             new THREE.SphereGeometry(atmosphere.innerRadius, 64, 64),
-            new THREE.ShaderMaterial({
-                uniforms: AtmUniforms,
-                vertexShader: vertexGround,
-                fragmentShader: fragmentGround
-            }));
+            earthMat
+        );
         this.add(this.ground);
         
+        // Apply texture offset to align prime meridian
+        this.ground.rotation.y = TEX_OFFSET;
+        
+        // Add atmosphere (simplified version)
         this.sky = new THREE.Mesh(
             new THREE.SphereGeometry(atmosphere.outerRadius, 64, 64),
             new THREE.ShaderMaterial({
@@ -1279,14 +1380,29 @@ class Earth3d extends THREE.Group {
         
         this._sunvect = new THREE.Vector3(1,0,0);
         this.sunvect = new THREE.Vector3(1,0,0);
-        this.ground.material.uniforms.v3LightPosition.value = this._sunvect;
         this.camera = camera;
         this.parentObj = new THREE.Group();
         this.cameracPs = new THREE.Vector3();
         this.cameracPs.copy(this.camera.position);
         this.cameracPs.sub(this.parentObj.position);
-        this.ground.material.uniforms.cPs.value = this.cameracPs;
+        this.sky.material.uniforms.cPs.value = this.cameracPs;
+        this.sky.material.uniforms.v3LightPosition.value = this._sunvect;
         this.axisY = new THREE.Vector3(0,1,0);
+        
+        // Track globe rotation for shader
+        this._globeLng = 0;
+        this._globeLat = 0;
+        
+        // Update globe rotation tracking based on camera/controls
+        this._updateGlobeRotation = () => {
+            const cameraPos = this.camera.position.clone();
+            const distance = cameraPos.length();
+            
+            this._globeLat = Math.asin(cameraPos.y / distance) * (180 / Math.PI);
+            this._globeLng = Math.atan2(cameraPos.x, cameraPos.z) * (180 / Math.PI);
+            
+            this._earthUniforms.globeRotation.value.set(this._globeLng, this._globeLat);
+        };
     }
     
     update() {
@@ -1295,10 +1411,11 @@ class Earth3d extends THREE.Group {
         this._sunvect.copy(this.sunvect);
         this.cameracPs.applyAxisAngle(this.axisY,-this.rotation.y);
         this._sunvect.applyAxisAngle(this.axisY,-this.rotation.y);
-        this.ground.material.uniforms.cPs.value = this.cameracPs;
-        this.ground.material.uniforms.v3LightPosition.value = this._sunvect;
         this.sky.material.uniforms.cPs.value = this.cameracPs;
         this.sky.material.uniforms.v3LightPosition.value = this._sunvect;
+        
+        // Update globe rotation tracking
+        this._updateGlobeRotation();
     }
     
     setSun(sun) {
@@ -1308,8 +1425,14 @@ class Earth3d extends THREE.Group {
     loadTextures(texDay, texNight, maxAnisotropy = 16) {
         texDay.anisotropy = maxAnisotropy;
         texNight.anisotropy = maxAnisotropy;
-        AtmUniforms.tDiffuse.value = texDay;
-        AtmUniforms.tDiffuseNight.value = texNight;
+        this._earthUniforms.dayTexture.value = texDay;
+        this._earthUniforms.nightTexture.value = texNight;
+        this.ground.material.needsUpdate = true;
+    }
+    
+    // Update sun position for day/night shader
+    setSunPosition(sunPos) {
+        this._earthUniforms.sunPosition.value.set(sunPos[0], sunPos[1]);
     }
 }
 
@@ -1553,13 +1676,24 @@ function init() {
     simulatedTime = Date.now();
 
     const texldr = new THREE.TextureLoader();
-    const diffuse = texldr.load('https://i.imgur.com/uIhmW2d.jpg');
-    const diffuseNight = texldr.load('https://i.imgur.com/SUr9tYs.gif');
+    const corsProxy = 'https://corsproxy.io/?';
     
     earth = new Earth3d(camera);
-    earth.loadTextures(diffuse, diffuseNight);
     scene.add(earth);
     earth.parentObj = earth;
+    
+    Promise.all([
+        texldr.loadAsync(corsProxy + encodeURIComponent(DEFAULT_TEX.day)),
+        texldr.loadAsync(corsProxy + encodeURIComponent(DEFAULT_TEX.night))
+    ]).then(([dayTexture, nightTexture]) => {
+        earth.loadTextures(dayTexture, nightTexture);
+    }).catch(error => {
+        console.error('Error loading textures:', error);
+        // Fallback to old textures if new ones fail
+        const diffuse = texldr.load('https://i.imgur.com/uIhmW2d.jpg');
+        const diffuseNight = texldr.load('https://i.imgur.com/SUr9tYs.gif');
+        earth.loadTextures(diffuse, diffuseNight);
+    });
 
     createSatellites(satelliteCount);
     createSatelliteMeshes();
@@ -1594,8 +1728,13 @@ function animate() {
     const currentTime = new Date(simulatedTime);
     const timeInSeconds = simulatedTime / 1000;
     
+    // Use the new solar position calculation for day/night shader
+    const sunPos = getSunPosition(currentTime);
+    earth.setSunPosition(sunPos);
+    
+    // Use legacy sun position for atmosphere
     const julianDate = getJulianDate(currentTime);
-    sunVector = getSunPosition(julianDate);
+    sunVector = getSunPositionLegacy(julianDate);
     earth.setSun(sunVector);
     
     const earthRotation = getEarthRotation(currentTime);
